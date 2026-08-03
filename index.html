@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#080f0a">
+<meta name="description" content="Aplikasi kasir POS untuk Rumah Herbal dan Madu Murni Abdul Ghani — cepat, ringan, dan bisa digunakan offline.">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kasir AG">
+<meta property="og:title" content="Kasir AG — Rumah Herbal & Madu Murni Abdul Ghani">
+<meta property="og:description" content="POS Kasir mobile-first dengan dukungan printer Bluetooth thermal">
+<title>Kasir AG · Rumah Herbal & Madu Murni Abdul Ghani</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== TOPBAR ===== -->
+  <header class="topbar">
+    <div class="topbar-title">
+      <div class="brand-logo">🍯</div>
+      <div class="brand-text">
+        <span class="brand-name" id="storeNameLabel">Rumah Herbal &amp; Madu Murni</span>
+        <span class="brand-sub">Abdul Ghani · POS Kasir</span>
+      </div>
+    </div>
+    <button id="btStatusBtn" class="bt-status" title="Status printer Bluetooth">
+      <span class="dot" id="btDot"></span>
+      <span id="btLabel">Printer</span>
+    </button>
+  </header>
+
+  <!-- ===== MAIN VIEWS ===== -->
+  <main id="views">
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="view active">
+      <div class="dashboard-greeting">
+        <h1 class="greeting-text">Selamat Datang 👋</h1>
+        <p class="greeting-sub" id="dashDate"></p>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card stat-primary">
+          <div class="stat-icon">💰</div>
+          <div class="stat-label">Omzet Hari Ini</div>
+          <div class="stat-value" id="dashToday">Rp0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">🧾</div>
+          <div class="stat-label">Transaksi Hari Ini</div>
+          <div class="stat-value" id="dashTodayCount">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📅</div>
+          <div class="stat-label">Omzet Minggu Ini</div>
+          <div class="stat-value" id="dashWeek">Rp0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📦</div>
+          <div class="stat-label">Total Produk</div>
+          <div class="stat-value" id="dashProducts">0</div>
+        </div>
+      </div>
+
+      <div class="section-head" style="margin-top:22px">
+        <h2>🏆 Produk Terlaris</h2>
+      </div>
+      <div id="topProductsList" class="top-products-list"></div>
+
+      <div class="section-head" style="margin-top:22px">
+        <h2>🕘 Transaksi Terakhir</h2>
+        <button class="btn btn-ghost btn-sm" id="dashViewAllBtn">Lihat semua</button>
+      </div>
+      <div id="dashRecentList" class="history-list"></div>
+    </section>
+
+    <!-- KASIR -->
+    <section id="view-kasir" class="view">
+      <div class="search-bar-wrap">
+        <input type="search" id="productSearch" class="search-input" placeholder="🔍  Cari produk..." autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+      <div class="product-grid" id="productGrid"></div>
+      <p class="empty-hint" id="productEmptyHint" hidden>Belum ada produk.<br>Tambahkan lewat tab <b>Produk</b>.</p>
+      <p class="empty-hint" id="productSearchEmpty" hidden>Produk tidak ditemukan 🔍</p>
+    </section>
+
+    <!-- PRODUK -->
+    <section id="view-produk" class="view">
+      <div class="section-head">
+        <h2>Daftar Produk</h2>
+        <button class="btn btn-primary btn-sm" id="addProductBtn">+ Tambah</button>
+      </div>
+      <div id="productList" class="product-list"></div>
+    </section>
+
+    <!-- RIWAYAT -->
+    <section id="view-riwayat" class="view">
+      <div class="section-head">
+        <h2>Riwayat Transaksi</h2>
+      </div>
+      <div id="historyList" class="history-list"></div>
+    </section>
+
+    <!-- PENGATURAN -->
+    <section id="view-pengaturan" class="view">
+      <h2 style="margin-bottom:16px">Pengaturan</h2>
+
+      <div class="card">
+        <h3>🏪 Struk &amp; Toko</h3>
+        <label>Nama toko
+          <input type="text" id="setStoreName" placeholder="Nama toko Anda">
+        </label>
+        <label>Alamat / catatan (opsional)
+          <input type="text" id="setStoreAddress" placeholder="Jl. Contoh No. 1, Kota">
+        </label>
+        <label>Teks penutup struk
+          <input type="text" id="setFooterText" placeholder="Terima kasih sudah berbelanja!">
+        </label>
+        <label>Lebar kertas
+          <select id="setPaperWidth">
+            <option value="32">58 mm (32 karakter)</option>
+            <option value="48">80 mm (48 karakter)</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="saveSettingsBtn">💾 Simpan Pengaturan</button>
+      </div>
+
+      <div class="card">
+        <h3>🖨️ Printer Bluetooth</h3>
+        <p class="muted" id="printerStateText">Belum terhubung.</p>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn btn-primary" id="connectPrinterBtn">Hubungkan</button>
+          <button class="btn" id="testPrintBtn">Tes Cetak</button>
+          <button class="btn btn-danger-outline" id="disconnectPrinterBtn" hidden>Putuskan</button>
+        </div>
+        <details class="advanced">
+          <summary>Pengaturan UUID manual</summary>
+          <p class="muted small" style="margin:8px 0">Isi jika koneksi otomatis gagal. Biarkan kosong untuk mode otomatis.</p>
+          <label>Service UUID
+            <input type="text" id="setServiceUuid" placeholder="mis. 0000ffe0-0000-1000-8000-00805f9b34fb">
+          </label>
+          <label>Characteristic UUID (write)
+            <input type="text" id="setCharUuid" placeholder="mis. 0000ffe1-0000-1000-8000-00805f9b34fb">
+          </label>
+          <button class="btn btn-sm" id="saveAdvancedBtn">Simpan UUID</button>
+        </details>
+      </div>
+
+      <div class="card">
+        <h3>💾 Cadangan Data</h3>
+        <p class="muted small">Simpan atau pulihkan produk &amp; riwayat transaksi dalam format JSON.</p>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn" id="exportBtn">📤 Ekspor</button>
+          <button class="btn" id="importBtn">📥 Impor</button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+      </div>
+
+      <p class="muted small footer-note">Kasir AG · v2.0 · Data tersimpan lokal di perangkat ini, tidak dikirim ke server manapun.</p>
+    </section>
+
+  </main>
+
+  <!-- ===== CART BAR (kasir only) ===== -->
+  <div id="cartBar" class="cart-bar" hidden>
+    <div class="cart-summary" id="cartSummaryBtn">
+      <span id="cartCount">0 item</span>
+      <span id="cartTotal">Rp0</span>
+    </div>
+    <button class="btn btn-primary btn-pay" id="openCheckoutBtn">Bayar →</button>
+  </div>
+
+  <!-- ===== BOTTOM NAV ===== -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-view="dashboard">
+      <span class="nav-icon">🏠</span><span>Beranda</span>
+    </button>
+    <button class="nav-btn" data-view="kasir">
+      <span class="nav-icon">🧾</span><span>Kasir</span>
+    </button>
+    <button class="nav-btn" data-view="produk">
+      <span class="nav-icon">📦</span><span>Produk</span>
+    </button>
+    <button class="nav-btn" data-view="riwayat">
+      <span class="nav-icon">🕘</span><span>Riwayat</span>
+    </button>
+    <button class="nav-btn" data-view="pengaturan">
+      <span class="nav-icon">⚙️</span><span>Atur</span>
+    </button>
+  </nav>
+
+</div><!-- /#app -->
+
+<!-- ===== MODAL: cart / checkout / forms ===== -->
+<div id="modalOverlay" class="modal-overlay" hidden>
+  <div class="modal" id="modalRoot"></div>
+</div>
+
+<!-- ===== TOAST ===== -->
+<div id="toast" class="toast" hidden></div>
+
+<script src="printer.js"></script>
+<script src="app.js"></script>
+<script>
+  // Daftarkan Service Worker untuk PWA offline support
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/kasir/sw.js', { scope: '/kasir/' })
+        .then(reg => console.log('[SW] Registered, scope:', reg.scope))
+        .catch(err => console.warn('[SW] Registration failed:', err));
+    });
+  }
+</script>
+</body>
+</html>
