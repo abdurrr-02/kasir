@@ -33,9 +33,9 @@
         <span class="brand-sub">Abdul Ghani · POS Kasir</span>
       </div>
     </div>
-    <button id="btStatusBtn" class="bt-status" title="Status printer Bluetooth">
+    <button id="btStatusBtn" class="bt-status" title="Cetak struk PDF">
       <span class="dot" id="btDot"></span>
-      <span id="btLabel">Printer</span>
+      <span id="btLabel">PDF</span>
     </button>
   </header>
 
@@ -136,24 +136,19 @@
       </div>
 
       <div class="card">
-        <h3>🖨️ Printer Bluetooth</h3>
-        <p class="muted" id="printerStateText">Belum terhubung.</p>
-        <div class="btn-row" style="margin-top:10px">
-          <button class="btn btn-primary" id="connectPrinterBtn">Hubungkan</button>
-          <button class="btn" id="testPrintBtn">Tes Cetak</button>
-          <button class="btn btn-danger-outline" id="disconnectPrinterBtn" hidden>Putuskan</button>
+        <h3>🖨️ Cetak Struk PDF</h3>
+        <p class="muted small" style="line-height:1.6;margin-bottom:12px">
+          Struk akan dibuka sebagai <b style="color:var(--text)">halaman PDF</b> di tab baru.
+          Di dialog cetak browser, pilih <b style="color:var(--primary)">Simpan sebagai PDF</b>
+          atau kirim langsung ke printer yang terhubung ke perangkat Anda.
+        </p>
+        <div class="pdf-info-row">
+          <span class="pdf-badge">📄 PDF Siap</span>
+          <span class="muted small">Tidak perlu pairing perangkat</span>
         </div>
-        <details class="advanced">
-          <summary>Pengaturan UUID manual</summary>
-          <p class="muted small" style="margin:8px 0">Isi jika koneksi otomatis gagal. Biarkan kosong untuk mode otomatis.</p>
-          <label>Service UUID
-            <input type="text" id="setServiceUuid" placeholder="mis. 0000ffe0-0000-1000-8000-00805f9b34fb">
-          </label>
-          <label>Characteristic UUID (write)
-            <input type="text" id="setCharUuid" placeholder="mis. 0000ffe1-0000-1000-8000-00805f9b34fb">
-          </label>
-          <button class="btn btn-sm" id="saveAdvancedBtn">Simpan UUID</button>
-        </details>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn btn-primary" id="testPrintBtn">🖨️ Tes Cetak PDF</button>
+        </div>
       </div>
 
       <div class="card">
@@ -166,7 +161,7 @@
         </div>
       </div>
 
-      <p class="muted small footer-note">Kasir AG · v2.0 · Data tersimpan lokal di perangkat ini, tidak dikirim ke server manapun.</p>
+      <p class="muted small footer-note">Kasir AG · v2.1 · Data tersimpan lokal di perangkat ini, tidak dikirim ke server manapun.</p>
     </section>
 
   </main>
