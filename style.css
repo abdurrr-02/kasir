@@ -800,6 +800,40 @@ details[open] > summary::before { content: '▾ '; }
 }
 
 /* ================================================
+   PDF PRINTER BADGE
+================================================ */
+.pdf-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+.pdf-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  background: var(--primary-glow);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Dot siap (green pulse) default untuk mode PDF */
+.dot.on {
+  background: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+  animation: blink 2s ease infinite;
+}
+
+/* ================================================
    DESKTOP ENHANCEMENT
 ================================================ */
 @media (min-width: 481px) {
