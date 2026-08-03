@@ -1,278 +1,348 @@
 /**
  * printer.js
- * Modul untuk menghubungkan ke printer thermal Bluetooth (BLE) generik
- * seperti EPPOS EP5813, dan mencetak struk dengan perintah ESC/POS mentah.
+ * Modul cetak struk sebagai PDF menggunakan window.print().
+ * Menggantikan printer Bluetooth thermal — tidak memerlukan perangkat keras,
+ * cukup buka dialog cetak browser dan pilih "Simpan sebagai PDF".
  *
- * Karena printer thermal BLE murah/generik tidak punya standar UUID resmi,
- * modul ini mencoba daftar UUID umum yang dipakai berbagai merek, lalu
- * secara otomatis mencari characteristic yang bisa ditulis (write).
- * Jika gagal, pengguna bisa mengisi UUID manual lewat menu Pengaturan.
+ * API publik dipertahankan agar app.js tidak banyak berubah:
+ *   ReceiptPrinter.printReceipt(options)
+ *   ReceiptPrinter.printTest(options)
+ *   ReceiptPrinter.setStatusCallback(fn)   ← tidak‑op, disimpan untuk kompatibilitas
  */
 
-const ThermalPrinter = (() => {
+const ReceiptPrinter = (() => {
 
-  // Daftar UUID service/characteristic yang umum dipakai printer BLE generik
-  // (SPP-over-BLE, Nordic UART, dan variannya). Ditambahkan sebagai optionalServices
-  // supaya browser mengizinkan aplikasi mengaksesnya.
-  const KNOWN_SERVICE_UUIDS = [
-    '000018f0-0000-1000-8000-00805f9b34fb', // umum di printer mini Cina
-    '0000ff00-0000-1000-8000-00805f9b34fb',
-    '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / banyak modul BLE serial
-    '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC / Microchip transparent UART
-    '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (NUS)
-    '0000ffb0-0000-1000-8000-00805f9b34fb',
-    '0000fee7-0000-1000-8000-00805f9b34fb',
-  ];
+  // ── Callback status (dipertahankan agar bindPrinterStatus tidak error) ──
+  let _statusCb = null;
+  function setStatusCallback(fn) { _statusCb = fn; }
 
-  let device = null;
-  let server = null;
-  let writeChar = null;
-  let onStatusChange = null;
-
-  function setStatusCallback(fn){ onStatusChange = fn; }
-
-  function notify(status, detail){
-    if (onStatusChange) onStatusChange(status, detail);
-  }
-
-  function getOverrideUuids(){
-    try{
-      const raw = localStorage.getItem('pos_printer_uuids');
-      return raw ? JSON.parse(raw) : null;
-    }catch(e){ return null; }
-  }
-
-  function isWritable(characteristic){
-    const p = characteristic.properties;
-    return p && (p.write || p.writeWithoutResponse);
-  }
-
-  async function writeChunked(bytes){
-    if (!writeChar) throw new Error('Printer belum terhubung');
-    const CHUNK = 180; // aman untuk kebanyakan MTU BLE setelah negosiasi
-    for (let i = 0; i < bytes.length; i += CHUNK){
-      const slice = bytes.slice(i, i + CHUNK);
-      if (writeChar.properties.writeWithoutResponse){
-        await writeChar.writeValueWithoutResponse(slice);
-      } else {
-        await writeChar.writeValue(slice);
-      }
-      // jeda kecil supaya buffer printer tidak overrun
-      await new Promise(r => setTimeout(r, 20));
-    }
-  }
-
-  async function findWritableCharacteristic(gattServer){
-    const override = getOverrideUuids();
-
-    // 1) Coba UUID manual dari pengaturan lanjutan (jika diisi user)
-    if (override && override.service && override.characteristic){
-      try{
-        const svc = await gattServer.getPrimaryService(override.service.toLowerCase());
-        const ch = await svc.getCharacteristic(override.characteristic.toLowerCase());
-        if (isWritable(ch)) return ch;
-      }catch(e){
-        console.warn('UUID manual gagal, lanjut ke deteksi otomatis:', e);
-      }
-    }
-
-    // 2) Coba semua service yang diminta lewat optionalServices
-    for (const svcUuid of KNOWN_SERVICE_UUIDS){
-      try{
-        const svc = await gattServer.getPrimaryService(svcUuid);
-        const chars = await svc.getCharacteristics();
-        const writable = chars.find(isWritable);
-        if (writable) return writable;
-      }catch(e){
-        // service ini tidak ada di printer, lanjut coba yang lain
-      }
-    }
-
-    // 3) Fallback terakhir: enumerasi semua primary services yang diizinkan
-    try{
-      const services = await gattServer.getPrimaryServices();
-      for (const svc of services){
-        const chars = await svc.getCharacteristics();
-        const writable = chars.find(isWritable);
-        if (writable) return writable;
-      }
-    }catch(e){ /* diabaikan */ }
-
-    return null;
-  }
-
-  async function connect(){
-    if (!navigator.bluetooth){
-      throw new Error('Web Bluetooth tidak didukung di browser ini. Gunakan Chrome/Edge di Android.');
-    }
-
-    notify('connecting');
-
-    device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: KNOWN_SERVICE_UUIDS,
-    });
-
-    device.addEventListener('gattserverdisconnected', () => {
-      writeChar = null;
-      notify('disconnected');
-    });
-
-    server = await device.gatt.connect();
-    writeChar = await findWritableCharacteristic(server);
-
-    if (!writeChar){
-      notify('error', 'Characteristic tulis tidak ditemukan otomatis. Isi UUID manual di Pengaturan lanjutan.');
-      throw new Error('Tidak ada characteristic yang bisa ditulis ditemukan.');
-    }
-
-    notify('connected', device.name || 'Printer');
-    return device.name || 'Printer';
-  }
-
-  function disconnect(){
-    if (device && device.gatt.connected){
-      device.gatt.disconnect();
-    }
-    writeChar = null;
-    notify('disconnected');
-  }
-
-  function isConnected(){
-    return !!(device && device.gatt && device.gatt.connected && writeChar);
-  }
-
-  // ---------------- ESC/POS ENCODER ----------------
-  // Perintah dasar ESC/POS dalam bentuk byte array.
-  const CMD = {
-    INIT: [0x1B, 0x40],
-    ALIGN_LEFT: [0x1B, 0x61, 0x00],
-    ALIGN_CENTER: [0x1B, 0x61, 0x01],
-    ALIGN_RIGHT: [0x1B, 0x61, 0x02],
-    BOLD_ON: [0x1B, 0x45, 0x01],
-    BOLD_OFF: [0x1B, 0x45, 0x00],
-    DOUBLE_ON: [0x1B, 0x21, 0x30],
-    DOUBLE_OFF: [0x1B, 0x21, 0x00],
-    FEED_LINE: [0x0A],
-    CUT_FULL: [0x1D, 0x56, 0x00],
-    CUT_PARTIAL: [0x1D, 0x56, 0x01],
-  };
-
-  function textToBytes(str){
-    // Konversi teks ke bytes. Karakter di luar ASCII dasar disederhanakan
-    // supaya kompatibel dengan codepage default printer (biasanya CP437).
-    const normalized = str
-      .replace(/[’‘]/g, "'")
-      .replace(/[“”]/g, '"')
-      .replace(/–|—/g, '-');
-    const bytes = [];
-    for (let i = 0; i < normalized.length; i++){
-      const code = normalized.charCodeAt(i);
-      bytes.push(code < 256 ? code : 0x3F); // '?' untuk karakter yang tidak didukung
-    }
-    return bytes;
-  }
-
-  function padLine(left, right, width){
-    const space = Math.max(1, width - left.length - right.length);
-    return left + ' '.repeat(space) + right;
-  }
-
-  function wrapText(str, width){
-    const words = str.split(' ');
-    const lines = [];
-    let current = '';
-    for (const w of words){
-      if ((current + ' ' + w).trim().length > width){
-        if (current) lines.push(current);
-        current = w;
-      } else {
-        current = (current ? current + ' ' : '') + w;
-      }
-    }
-    if (current) lines.push(current);
-    return lines.length ? lines : [''];
-  }
-
-  /**
-   * Membangun byte array struk dari data transaksi.
-   * @param {object} receipt {storeName, address, items:[{name, qty, price}], total, cash, change, footer, width}
-   */
-  function buildReceiptBytes(receipt){
-    const width = receipt.width || 32;
-    let out = [];
-    const push = arr => { out = out.concat(arr); };
-    const line = (s='') => push(textToBytes(s + '\n'));
-
-    push(CMD.INIT);
-    push(CMD.ALIGN_CENTER);
-    push(CMD.BOLD_ON);
-    push(CMD.DOUBLE_ON);
-    line(receipt.storeName || 'Toko Saya');
-    push(CMD.DOUBLE_OFF);
-    push(CMD.BOLD_OFF);
-    if (receipt.address) line(receipt.address);
-    line('-'.repeat(width));
-
-    push(CMD.ALIGN_LEFT);
-    const dateStr = new Date(receipt.date || Date.now()).toLocaleString('id-ID');
-    line(dateStr);
-    line('-'.repeat(width));
-
-    receipt.items.forEach(it => {
-      wrapText(it.name, width).forEach((l, idx) => line(l));
-      const qtyPrice = `${it.qty} x ${formatMoney(it.price)}`;
-      const subtotal = formatMoney(it.qty * it.price);
-      line(padLine(qtyPrice, subtotal, width));
-    });
-
-    line('-'.repeat(width));
-    push(CMD.BOLD_ON);
-    line(padLine('TOTAL', formatMoney(receipt.total), width));
-    push(CMD.BOLD_OFF);
-
-    if (typeof receipt.cash === 'number'){
-      line(padLine('Tunai', formatMoney(receipt.cash), width));
-      line(padLine('Kembali', formatMoney(receipt.change), width));
-    }
-
-    line('-'.repeat(width));
-    push(CMD.ALIGN_CENTER);
-    line(receipt.footer || 'Terima kasih!');
-    push(CMD.FEED_LINE);
-    push(CMD.FEED_LINE);
-    push(CMD.FEED_LINE);
-    push(CMD.CUT_PARTIAL);
-
-    return new Uint8Array(out);
-  }
-
-  function formatMoney(n){
+  // ── Pemformat uang ──
+  function formatMoney(n) {
     return 'Rp' + Math.round(n).toLocaleString('id-ID');
   }
 
-  async function printReceipt(receipt){
-    if (!isConnected()) throw new Error('Printer belum terhubung.');
-    const bytes = buildReceiptBytes(receipt);
-    await writeChunked(bytes);
-  }
+  // ── Buat markup HTML struk ──
+  function buildReceiptHTML(receipt) {
+    const {
+      storeName  = 'Toko Saya',
+      address    = '',
+      footer     = 'Terima kasih!',
+      items      = [],
+      total      = 0,
+      cash,
+      change,
+      date       = Date.now(),
+    } = receipt;
 
-  async function printTest(width){
-    if (!isConnected()) throw new Error('Printer belum terhubung.');
-    const bytes = buildReceiptBytes({
-      storeName: 'TES CETAK',
-      address: 'Koneksi printer berhasil',
-      items: [{ name: 'Contoh item', qty: 1, price: 10000 }],
-      total: 10000,
-      width: width || 32,
-      footer: 'Printer siap digunakan',
-      date: Date.now(),
+    const dateStr = new Date(date).toLocaleString('id-ID', {
+      day: '2-digit', month: 'long', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
     });
-    await writeChunked(bytes);
+
+    const itemRows = items.map(it => `
+      <tr class="item-row">
+        <td class="item-name">${escSafe(it.name)}</td>
+        <td class="item-qty">${it.qty}×</td>
+        <td class="item-price">${formatMoney(it.qty * it.price)}</td>
+      </tr>
+      <tr class="item-unit-row">
+        <td colspan="3" class="item-unit">${formatMoney(it.price)} / item</td>
+      </tr>`).join('');
+
+    const paymentRows = (typeof cash === 'number') ? `
+      <tr><td>Tunai</td><td></td><td>${formatMoney(cash)}</td></tr>
+      <tr class="change-row"><td>Kembalian</td><td></td><td>${formatMoney(change)}</td></tr>` : '';
+
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Struk — ${escSafe(storeName)}</title>
+  <style>
+    /* ===== RECEIPT PRINT STYLES ===== */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      padding: 24px 12px;
+      min-height: 100vh;
+    }
+
+    .receipt-wrapper {
+      background: #fff;
+      width: 320px;
+      padding: 24px 20px 32px;
+      border-radius: 12px;
+      box-shadow: 0 4px 32px rgba(0,0,0,0.12);
+      position: relative;
+    }
+
+    /* Sawtooth edge atas dan bawah */
+    .receipt-wrapper::before,
+    .receipt-wrapper::after {
+      content: '';
+      display: block;
+      height: 12px;
+      background:
+        radial-gradient(circle at 6px -6px, #f5f5f5 8px, transparent 0),
+        radial-gradient(circle at 18px -6px, #f5f5f5 8px, transparent 0);
+      background-size: 24px 12px;
+      position: absolute;
+      left: 0; right: 0;
+    }
+    .receipt-wrapper::before { top: 0; }
+    .receipt-wrapper::after  {
+      bottom: 0;
+      background:
+        radial-gradient(circle at 6px 18px, #f5f5f5 8px, transparent 0),
+        radial-gradient(circle at 18px 18px, #f5f5f5 8px, transparent 0);
+      background-size: 24px 12px;
+    }
+
+    .header { text-align: center; margin-bottom: 16px; padding-top: 8px; }
+
+    .store-name {
+      font-size: 17px;
+      font-weight: 800;
+      color: #111;
+      line-height: 1.3;
+      margin-bottom: 4px;
+    }
+
+    .store-address {
+      font-size: 11px;
+      color: #777;
+      line-height: 1.5;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1.5px dashed #ddd;
+      margin: 12px 0;
+    }
+
+    .date-row {
+      font-size: 11px;
+      color: #888;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .item-row td {
+      padding: 5px 0 2px;
+      vertical-align: top;
+    }
+    .item-name  { color: #222; font-weight: 600; width: 55%; }
+    .item-qty   { color: #555; text-align: center; width: 12%; }
+    .item-price { text-align: right; font-weight: 700; color: #111; width: 33%; }
+
+    .item-unit-row td { padding: 0 0 6px; }
+    .item-unit { font-size: 11px; color: #aaa; }
+
+    .total-section { margin-top: 4px; }
+
+    .total-row-main td {
+      padding: 8px 0 4px;
+      font-size: 16px;
+      font-weight: 800;
+      border-top: 2px solid #111;
+      color: #111;
+    }
+    .total-row-main td:last-child { text-align: right; color: #1a7d3e; }
+
+    .change-row td { color: #1a7d3e; font-weight: 700; }
+    .change-row td:last-child { text-align: right; }
+
+    table .payment tr td:last-child { text-align: right; }
+    table td { vertical-align: middle; }
+
+    .footer-section {
+      text-align: center;
+      margin-top: 20px;
+      padding-top: 12px;
+      border-top: 1.5px dashed #ddd;
+    }
+
+    .footer-text {
+      font-size: 12px;
+      color: #888;
+      line-height: 1.6;
+      font-style: italic;
+    }
+
+    .barcode-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 14px 0 4px;
+      gap: 4px;
+    }
+    .barcode-lines {
+      display: flex;
+      gap: 2px;
+      height: 36px;
+      align-items: flex-end;
+    }
+    .barcode-lines span {
+      display: block;
+      width: 2px;
+      background: #111;
+      border-radius: 1px;
+    }
+    .barcode-num { font-size: 9px; color: #bbb; letter-spacing: 2px; }
+
+    /* ===== PRINT RULES ===== */
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+        justify-content: flex-start;
+      }
+      .receipt-wrapper {
+        box-shadow: none;
+        border-radius: 0;
+        width: 100%;
+        max-width: 100%;
+      }
+      .receipt-wrapper::before,
+      .receipt-wrapper::after { display: none; }
+      .no-print { display: none !important; }
+
+      @page {
+        margin: 8mm;
+        size: 80mm auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-wrapper">
+
+    <div class="header">
+      <div class="store-name">${escSafe(storeName)}</div>
+      ${address ? `<div class="store-address">${escSafe(address)}</div>` : ''}
+    </div>
+
+    <hr class="divider">
+    <div class="date-row">📅 ${dateStr}</div>
+    <hr class="divider">
+
+    <table>
+      <tbody>
+        ${itemRows}
+      </tbody>
+    </table>
+
+    <hr class="divider">
+
+    <table class="total-section">
+      <tbody>
+        <tr class="total-row-main">
+          <td>TOTAL</td>
+          <td></td>
+          <td style="text-align:right">${formatMoney(total)}</td>
+        </tr>
+        ${paymentRows}
+      </tbody>
+    </table>
+
+    <div class="barcode-placeholder">
+      <div class="barcode-lines">
+        ${generateBarcodeSVG()}
+      </div>
+      <div class="barcode-num">${Date.now().toString().slice(-10)}</div>
+    </div>
+
+    <div class="footer-section">
+      <div class="footer-text">${escSafe(footer)}</div>
+    </div>
+
+  </div>
+
+  <script>
+    // Auto-buka dialog cetak setelah font dimuat
+    window.addEventListener('load', () => {
+      setTimeout(() => window.print(), 400);
+    });
+  <\/script>
+</body>
+</html>`;
   }
 
+  // ── Barcode dekoratif sederhana ──
+  function generateBarcodeSVG() {
+    const heights = [28,20,36,24,32,18,30,22,36,16,28,36,20,30,24,36,18,28,32,20,36,24,16,30];
+    return heights.map(h =>
+      `<span style="height:${h}px"></span>`
+    ).join('');
+  }
+
+  // ── Escape HTML ──
+  function escSafe(str) {
+    return String(str || '')
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;');
+  }
+
+  // ── Cetak struk utama ──
+  async function printReceipt(receipt) {
+    const html = buildReceiptHTML(receipt);
+    openPrintWindow(html);
+  }
+
+  // ── Cetak tes ──
+  async function printTest() {
+    await printReceipt({
+      storeName: 'TES CETAK',
+      address:   'Koneksi berhasil — siap cetak PDF',
+      items:     [{ name: 'Contoh Produk', qty: 1, price: 10000 }],
+      total:     10000,
+      cash:      10000,
+      change:    0,
+      footer:    'Printer PDF siap digunakan 🎉',
+      date:      Date.now(),
+    });
+  }
+
+  // ── Buka jendela cetak ──
+  function openPrintWindow(html) {
+    const win = window.open('', '_blank', 'width=480,height=700,menubar=no,toolbar=no');
+    if (!win) {
+      alert('Popup diblokir! Mohon izinkan popup untuk situs ini agar struk bisa dicetak.');
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }
+
+  // ── API Publik ──
   return {
-    connect, disconnect, isConnected, setStatusCallback,
-    printReceipt, printTest, buildReceiptBytes, formatMoney,
+    setStatusCallback,
+    printReceipt,
+    printTest,
+    formatMoney,
+    // Alias agar app.js yang masih pakai nama "ThermalPrinter" tetap berfungsi
+    connect:      () => Promise.resolve('PDF'),
+    disconnect:   () => {},
+    isConnected:  () => true,
   };
+
 })();
+
+// Alias global agar kode lama (ThermalPrinter.xxx) tetap berjalan
+const ThermalPrinter = ReceiptPrinter;
