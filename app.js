@@ -324,8 +324,8 @@ function openCheckoutModal() {
       <span>Kembalian</span>
       <span id="changeVal" class="val" style="color:var(--gold)">Rp0</span>
     </div>
-    <button class="btn btn-primary" style="width:100%; margin-top:14px" id="confirmPayBtn">✓ Selesaikan &amp; Cetak Struk</button>
-    <button class="btn" style="width:100%; margin-top:8px" id="confirmNoPrintBtn">Selesaikan Tanpa Cetak</button>
+    <button class="btn btn-primary" style="width:100%; margin-top:14px" id="confirmPayBtn">✓ Selesaikan &amp; Simpan PDF Struk</button>
+    <button class="btn" style="width:100%; margin-top:8px" id="confirmNoPrintBtn">Selesaikan Tanpa Struk</button>
   `);
 
   const cashInput = document.getElementById('cashInput');
@@ -385,21 +385,20 @@ async function finalizeSale(shouldPrint, cash) {
 
   if (shouldPrint) {
     try {
-      await ThermalPrinter.printReceipt({
+      await ReceiptPrinter.printReceipt({
         storeName: state.settings.storeName,
         address:   state.settings.storeAddress,
         footer:    state.settings.footerText,
-        width:     state.settings.paperWidth,
         items:     trx.items,
         total:     trx.total,
         cash:      trx.cash,
         change:    trx.change,
         date:      trx.date,
       });
-      showToast('Transaksi tersimpan & struk dicetak 🖨️');
+      showToast('Transaksi tersimpan & struk PDF dibuka 📄');
     } catch (e) {
       console.error(e);
-      showToast('Tersimpan, cetak gagal: ' + e.message);
+      showToast('Tersimpan, gagal buka PDF: ' + e.message);
     }
   } else {
     showToast('Transaksi tersimpan ✓');
@@ -548,25 +547,24 @@ ${lines}
 Tunai   ${formatMoney(trx.cash)}
 Kembali ${formatMoney(trx.change)}
     </div>
-    <button class="btn btn-primary" style="width:100%; margin-top:4px" id="reprintBtn">🖨️ Cetak Ulang</button>
+    <button class="btn btn-primary" style="width:100%; margin-top:4px" id="reprintBtn">📄 Cetak PDF Struk</button>
   `);
   document.getElementById('closeModal').addEventListener('click', closeModal);
   document.getElementById('reprintBtn').addEventListener('click', async () => {
     try {
-      await ThermalPrinter.printReceipt({
+      await ReceiptPrinter.printReceipt({
         storeName: state.settings.storeName,
         address:   state.settings.storeAddress,
         footer:    state.settings.footerText,
-        width,
         items:  trx.items,
         total:  trx.total,
         cash:   trx.cash,
         change: trx.change,
         date:   trx.date,
       });
-      showToast('Struk dicetak ulang 🖨️');
+      showToast('PDF struk dibuka 📄');
     } catch (e) {
-      showToast('Cetak gagal: ' + e.message);
+      showToast('Gagal buka PDF: ' + e.message);
     }
   });
 }
@@ -579,12 +577,6 @@ function fillSettingsForm() {
   document.getElementById('setStoreAddress').value = state.settings.storeAddress;
   document.getElementById('setFooterText').value   = state.settings.footerText;
   document.getElementById('setPaperWidth').value   = state.settings.paperWidth;
-
-  const override = load('pos_printer_uuids', null);
-  if (override) {
-    document.getElementById('setServiceUuid').value = override.service || '';
-    document.getElementById('setCharUuid').value    = override.characteristic || '';
-  }
 }
 
 function bindPengaturan() {
@@ -598,38 +590,12 @@ function bindPengaturan() {
     showToast('Pengaturan disimpan ✓');
   });
 
-  document.getElementById('saveAdvancedBtn').addEventListener('click', () => {
-    const service        = document.getElementById('setServiceUuid').value.trim();
-    const characteristic = document.getElementById('setCharUuid').value.trim();
-    if (service && characteristic) {
-      save('pos_printer_uuids', { service, characteristic });
-      showToast('UUID printer disimpan');
-    } else {
-      localStorage.removeItem('pos_printer_uuids');
-      showToast('UUID manual dikosongkan (mode otomatis)');
-    }
-  });
-
-  document.getElementById('connectPrinterBtn').addEventListener('click', async () => {
-    try {
-      const name = await ThermalPrinter.connect();
-      showToast('Terhubung ke ' + name);
-    } catch (e) {
-      console.error(e);
-      showToast(e.message || 'Gagal terhubung');
-    }
-  });
-
-  document.getElementById('disconnectPrinterBtn').addEventListener('click', () => {
-    ThermalPrinter.disconnect();
-  });
-
   document.getElementById('testPrintBtn').addEventListener('click', async () => {
     try {
-      await ThermalPrinter.printTest(state.settings.paperWidth);
-      showToast('Tes cetak terkirim');
+      await ReceiptPrinter.printTest();
+      showToast('PDF tes struk dibuka 📄');
     } catch (e) {
-      showToast(e.message || 'Cetak gagal');
+      showToast(e.message || 'Gagal buka PDF');
     }
   });
 
@@ -682,34 +648,14 @@ function bindPengaturan() {
 }
 
 // ============================================================
-// PRINTER STATUS UI
+// PRINTER STATUS UI  (PDF mode — selalu siap)
 // ============================================================
 function bindPrinterStatus() {
-  ThermalPrinter.setStatusCallback((status, detail) => {
-    const dot          = document.getElementById('btDot');
-    const label        = document.getElementById('btLabel');
-    const stateText    = document.getElementById('printerStateText');
-    const disconnectBtn= document.getElementById('disconnectPrinterBtn');
-
-    dot.classList.remove('on', 'err');
-    if (status === 'connected') {
-      dot.classList.add('on');
-      label.textContent     = 'Terhubung';
-      stateText.textContent = `Terhubung ke: ${detail}`;
-      disconnectBtn.hidden  = false;
-    } else if (status === 'connecting') {
-      label.textContent     = 'Menyambung…';
-      stateText.textContent = 'Sedang menghubungkan…';
-    } else if (status === 'error') {
-      dot.classList.add('err');
-      label.textContent     = 'Error';
-      stateText.textContent = detail || 'Gagal terhubung.';
-    } else {
-      label.textContent     = 'Printer';
-      stateText.textContent = 'Belum terhubung.';
-      disconnectBtn.hidden  = true;
-    }
-  });
+  // Tampilkan status PDF siap di topbar
+  const dot   = document.getElementById('btDot');
+  const label = document.getElementById('btLabel');
+  if (dot)   { dot.classList.add('on'); }
+  if (label) { label.textContent = 'PDF'; }
 
   document.getElementById('btStatusBtn').addEventListener('click', () => switchView('pengaturan'));
 }
